@@ -60,7 +60,13 @@ KNOWLEDGE:
 ${CONTENT}`;
 
 // ---------- 3. SETTINGS ----------
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// Works with a Groq key (starts with "gsk_") or a Google Gemini key.
+// Put the key in GROQ_API_KEY (or GEMINI_API_KEY). The provider is detected from the key.
+const API_KEY = process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || '';
+const PROVIDER = API_KEY.startsWith('gsk_') ? 'groq' : 'gemini';
+const MODEL = PROVIDER === 'groq'
+  ? (process.env.GROQ_MODEL || 'llama-3.3-70b-versatile')
+  : (process.env.GEMINI_MODEL || 'gemini-2.5-flash');
 const MAX_MESSAGES = 20;
 const MAX_CHARS = 500;
 const HISTORY = 10;
@@ -118,7 +124,7 @@ module.exports = async function handler(req, res) {
 
   // Health check: open /api/chat in a browser to test the deployment.
   if (req.method === 'GET') {
-    return send(res, 200, { ok: true, hasKey: Boolean(process.env.GEMINI_API_KEY), model: MODEL });
+    return send(res, 200, { ok: true, hasKey: Boolean(API_KEY), provider: PROVIDER, model: MODEL });
   }
   if (req.method !== 'POST') return send(res, 405, { error: 'method_not_allowed' });
 
@@ -130,7 +136,7 @@ module.exports = async function handler(req, res) {
   const ip = String(req.headers['x-forwarded-for'] || 'unknown').split(',')[0].trim();
   if (rateLimited(ip)) return send(res, 429, { error: 'rate_limited' });
 
-  if (!process.env.GEMINI_API_KEY) return send(res, 500, { error: 'missing_api_key' });
+  if (!API_KEY) return send(res, 500, { error: 'missing_api_key' });
 
   // Validate input
   let messages;
@@ -152,33 +158,48 @@ module.exports = async function handler(req, res) {
   let recent = messages.slice(-HISTORY);
   while (recent.length && recent[0].role !== 'user') recent = recent.slice(1);
 
-  const body = {
-    systemInstruction: { parts: [{ text: SYSTEM }] },
-    contents: recent.map((m) => ({
-      role: m.role === 'assistant' ? 'model' : 'user',
-      parts: [{ text: m.content }],
-    })),
-    generationConfig: { temperature: 0.4, maxOutputTokens: 700 },
-  };
-
   try {
-    const r = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`,
-      {
+    let reply = '';
+    let r, data;
+
+    if (PROVIDER === 'groq') {
+      r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': process.env.GEMINI_API_KEY },
-        body: JSON.stringify(body),
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${API_KEY}` },
+        body: JSON.stringify({
+          model: MODEL,
+          temperature: 0.4,
+          max_tokens: 700,
+          messages: [{ role: 'system', content: SYSTEM }, ...recent.map((m) => ({ role: m.role, content: m.content }))],
+        }),
+      });
+      data = await r.json().catch(() => ({}));
+      if (r.ok) reply = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content || '').trim();
+    } else {
+      r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': API_KEY },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: SYSTEM }] },
+            contents: recent.map((m) => ({ role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] })),
+            generationConfig: { temperature: 0.4, maxOutputTokens: 700 },
+          }),
+        }
+      );
+      data = await r.json().catch(() => ({}));
+      if (r.ok) {
+        const parts = data.candidates && data.candidates[0] && data.candidates[0].content && data.candidates[0].content.parts;
+        reply = (parts || []).map((p) => p.text || '').join('').trim();
       }
-    );
-    const data = await r.json().catch(() => ({}));
+    }
+
     if (!r.ok) {
-      // Log only status + Gemini's error message. Never the visitor's text or the key.
-      console.error('gemini_error', r.status, data && data.error && data.error.message);
+      // Log only provider, status and the provider's error message. Never the visitor's text or the key.
+      console.error('llm_error', PROVIDER, r.status, data && data.error && data.error.message);
       return send(res, r.status === 429 ? 429 : 502, { error: r.status === 429 ? 'rate_limited' : 'model_error' });
     }
-    const parts = data.candidates && data.candidates[0] && data.candidates[0].content &&
-      data.candidates[0].content.parts;
-    const reply = (parts || []).map((p) => p.text || '').join('').trim();
     if (!reply) return send(res, 502, { error: 'empty_reply' });
     return send(res, 200, { reply });
   } catch (e) {
