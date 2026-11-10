@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ask Sophie: test page</title>
+<style>
+  body{font:16px/1.5 system-ui,sans-serif;background:#FAF6F0;color:#2E2142;margin:0;display:grid;place-items:center;min-height:100vh}
+  main{width:min(560px,92vw);background:#EBE1D2;border-radius:20px;padding:20px}
+  h1{font-size:20px;margin:0 0 12px}
+  #log{background:#FAF6F0;border-radius:12px;padding:12px;height:320px;overflow:auto;display:flex;flex-direction:column;gap:8px}
+  .m{padding:8px 12px;border-radius:12px;max-width:85%;white-space:pre-wrap}
+  .u{background:#6B4EAE;color:#fff;align-self:flex-end}
+  .b{background:#EBE1D2}
+  form{display:flex;gap:8px;margin-top:12px}
+  input{flex:1;padding:10px 12px;border-radius:10px;border:1px solid #D8C9B3;font:inherit}
+  button{padding:10px 16px;border:0;border-radius:10px;background:#6B4EAE;color:#fff;font:inherit;cursor:pointer}
+  button:disabled{opacity:.6}
+</style>
+</head>
+<body>
+<main>
+  <h1>Ask Sophie (test page)</h1>
+  <div id="log" aria-live="polite"></div>
+  <form id="f"><input id="q" maxlength="500" placeholder="Ask about Sofiya…" autocomplete="off" required><button id="s">Send</button></form>
+</main>
+<script>
+var msgs=[], log=document.getElementById('log'), f=document.getElementById('f'), q=document.getElementById('q'), s=document.getElementById('s');
+function add(t,c){var d=document.createElement('div');d.className='m '+c;d.textContent=t;log.appendChild(d);log.scrollTop=log.scrollHeight;return d;}
+add('Hi! I’m Sophie. Ask me about Sofiya’s projects, skills, certifications or case studies.','b');
+f.addEventListener('submit',async function(e){
+  e.preventDefault();var t=q.value.trim();if(!t)return;q.value='';s.disabled=true;
+  add(t,'u');msgs.push({role:'user',content:t});var w=add('Sophie is thinking…','b');
+  try{
+    var r=await fetch('/api/chat',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:msgs})});
+    var d=await r.json();
+    if(r.ok&&d.reply){w.textContent=d.reply;msgs.push({role:'assistant',content:d.reply});}
+    else{w.textContent=d.error==='rate_limited'?'Too many questions. Please wait a minute.':'Something went wrong ('+(d.error||r.status)+'). Email sophiamahammed67@gmail.com.';msgs.pop();}
+  }catch(err){w.textContent='Could not reach the server.';msgs.pop();}
+  s.disabled=false;q.focus();
+});
+</script>
+</body>
+</html>

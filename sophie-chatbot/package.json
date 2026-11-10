@@ -1,0 +1,8 @@
+{
+  "name": "sophie-chatbot",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Ask Sophie: a small, secure chatbot API that answers questions about Sofiya Mohammed Hassen's portfolio.",
+  "engines": { "node": ">=18" },
+  "scripts": { "test": "node test.js" }
+}
